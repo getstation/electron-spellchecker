@@ -216,8 +216,11 @@ export default class SpellCheckHandler {
 
     let input = inputText || (fromEventCapture(document.body, 'input')
       .mergeMap((e) => {
-        if (!e.target || !e.target.value) return Observable.empty();
-        if (e.target.value.match(/\S\s$/)) {
+        if (!e.target) return Observable.empty();
+        const value = e.target.isContentEditable ? e.target.textContent : e.target.value;
+        if (!value) return Observable.empty();
+
+        if (value.match(/\S\s$/)) {
           wordsTyped++;
         }
 
@@ -226,7 +229,7 @@ export default class SpellCheckHandler {
           possiblySwitchedCharacterSets.next(true);
         }
 
-        return Observable.of(e.target.value);
+        return Observable.of(value);
       }));
 
     let disp = new Subscription();
