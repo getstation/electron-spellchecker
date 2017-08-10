@@ -207,11 +207,6 @@ export default class SpellCheckHandler {
    *                            things that this method registered.
    */
   attachToInput(inputText=null) {
-    // OS X has no need for any of this
-    if (isMac && !inputText) {
-      return Subscription.EMPTY;
-    }
-
     let possiblySwitchedCharacterSets = new Subject();
     let wordsTyped = 0;
 
