@@ -1,4 +1,4 @@
-const cld = require('cld');
+const cld = require('@paulcbetts/cld');
 
 export function detect(text) {
   return new Promise((res,rej) => {
