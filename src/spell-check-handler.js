@@ -7,6 +7,7 @@ import {Observable} from 'rxjs/Observable';
 import {Subject} from 'rxjs/Subject';
 import SerialSubscription from 'rxjs-serial-subscription';
 
+import 'rxjs/add/observable/merge';
 import 'rxjs/add/observable/defer';
 import 'rxjs/add/observable/empty';
 import 'rxjs/add/observable/fromEvent';
