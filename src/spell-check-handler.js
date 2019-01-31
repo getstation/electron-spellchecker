@@ -3,7 +3,7 @@ import {requireTaskPool} from 'electron-remote';
 import LRU from 'lru-cache';
 
 import {Subscription} from 'rxjs/Subscription';
-import {Observable} from 'rxjs/Observable';
+import {Observable} from 'rxjs';
 import {Subject} from 'rxjs/Subject';
 import SerialSubscription from 'rxjs-serial-subscription';
 
