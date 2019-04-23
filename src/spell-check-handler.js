@@ -464,18 +464,19 @@ module.exports = class SpellCheckHandler {
    *  The actual callout called by Electron to handle spellchecking
    *  @private
    */
-  handleElectronSpellCheck(text) {
-    if (!this.currentSpellchecker) return true;
+  handleElectronSpellCheck(words, callback) {
+    if (!this.currentSpellchecker) callback([]);
 
-    if (isMac) {
-      return !this.isMisspelled(text);
+    if (!isMac) {
+      this.spellCheckInvoked.next(true);
     }
 
-    this.spellCheckInvoked.next(true);
+    const misspelled = words.filter(x => this.isMisspelled(x));
 
-    let result = this.isMisspelled(text);
-    if (result) this.spellingErrorOccurred.next(text);
-    return !result;
+    if (!isMac) {
+      misspelled.forEach(x => this.spellingErrorOccurred.next(x));
+    }
+    callback(misspelled);
   }
 
   /**
