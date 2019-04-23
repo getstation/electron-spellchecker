@@ -132,7 +132,6 @@ module.exports = class SpellCheckHandler {
     });
 
     this.scheduler = scheduler;
-    this.shouldAutoCorrect = true;
     this._automaticallyIdentifyLanguages = true;
 
     this.disp = new SerialSubscription();
@@ -145,7 +144,6 @@ module.exports = class SpellCheckHandler {
       if (webFrame) {
         webFrame.setSpellCheckProvider(
           this.currentSpellcheckerLanguage,
-          this.shouldAutoCorrect,
           { spellCheck: this.handleElectronSpellCheck.bind(this) });
       }
       return;
@@ -303,7 +301,6 @@ module.exports = class SpellCheckHandler {
           d('Actually installing spell check provider to Electron');
           webFrame.setSpellCheckProvider(
             this.currentSpellcheckerLanguage,
-            this.shouldAutoCorrect,
             { spellCheck: this.handleElectronSpellCheck.bind(this) });
 
           prevSpellCheckLanguage = this.currentSpellcheckerLanguage;
