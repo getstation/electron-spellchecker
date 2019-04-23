@@ -12,6 +12,7 @@ require('rxjs/add/observable/empty');
 require('rxjs/add/observable/fromEvent');
 require('rxjs/add/observable/fromPromise');
 require('rxjs/add/observable/of');
+require('rxjs/add/observable/merge');
 
 require('rxjs/add/operator/catch');
 require('rxjs/add/operator/concat');
