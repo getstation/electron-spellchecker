@@ -1,5 +1,5 @@
 # electron-spellchecker
-⚠️ 2.x versions are only compatible with Electron >= 5
+⚠️ 3.x versions are only compatible with Electron >= 5
 
 ![](https://img.shields.io/npm/dm/electron-spellchecker.svg) <a href="https://electron-userland.github.io/electron-spellchecker/docs">![](https://electron-userland.github.io/electron-spellchecker/docs/badge.svg)</a>
 
