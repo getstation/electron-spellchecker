@@ -12,6 +12,7 @@ require('rxjs/add/observable/empty');
 require('rxjs/add/observable/fromEvent');
 require('rxjs/add/observable/fromPromise');
 require('rxjs/add/observable/of');
+require('rxjs/add/observable/merge');
 
 require('rxjs/add/operator/catch');
 require('rxjs/add/operator/concat');
@@ -132,7 +133,6 @@ module.exports = class SpellCheckHandler {
     });
 
     this.scheduler = scheduler;
-    this.shouldAutoCorrect = true;
     this._automaticallyIdentifyLanguages = true;
 
     this.disp = new SerialSubscription();
@@ -145,7 +145,6 @@ module.exports = class SpellCheckHandler {
       if (webFrame) {
         webFrame.setSpellCheckProvider(
           this.currentSpellcheckerLanguage,
-          this.shouldAutoCorrect,
           { spellCheck: this.handleElectronSpellCheck.bind(this) });
       }
       return;
@@ -303,7 +302,6 @@ module.exports = class SpellCheckHandler {
           d('Actually installing spell check provider to Electron');
           webFrame.setSpellCheckProvider(
             this.currentSpellcheckerLanguage,
-            this.shouldAutoCorrect,
             { spellCheck: this.handleElectronSpellCheck.bind(this) });
 
           prevSpellCheckLanguage = this.currentSpellcheckerLanguage;
@@ -466,18 +464,19 @@ module.exports = class SpellCheckHandler {
    *  The actual callout called by Electron to handle spellchecking
    *  @private
    */
-  handleElectronSpellCheck(text) {
-    if (!this.currentSpellchecker) return true;
+  handleElectronSpellCheck(words, callback) {
+    if (!this.currentSpellchecker) callback([]);
 
-    if (isMac) {
-      return !this.isMisspelled(text);
+    if (!isMac) {
+      this.spellCheckInvoked.next(true);
     }
 
-    this.spellCheckInvoked.next(true);
+    const misspelled = words.filter(x => this.isMisspelled(x));
 
-    let result = this.isMisspelled(text);
-    if (result) this.spellingErrorOccurred.next(text);
-    return !result;
+    if (!isMac) {
+      misspelled.forEach(x => this.spellingErrorOccurred.next(x));
+    }
+    callback(misspelled);
   }
 
   /**
