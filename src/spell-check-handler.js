@@ -1,5 +1,5 @@
 const {spawn} = require('spawn-rx');
-const {requireTaskPool} = require('electron-remote');
+const {requireTaskPool} = require('@aabuhijleh/electron-remote');
 const LRU = require('lru-cache');
 
 const {Subscription} = require('rxjs/Subscription');
@@ -12,7 +12,6 @@ require('rxjs/add/observable/empty');
 require('rxjs/add/observable/fromEvent');
 require('rxjs/add/observable/fromPromise');
 require('rxjs/add/observable/of');
-require('rxjs/add/observable/merge');
 
 require('rxjs/add/operator/catch');
 require('rxjs/add/operator/concat');
@@ -128,11 +127,10 @@ module.exports = class SpellCheckHandler {
     this.currentSpellcheckerChanged = new Subject();
     this.spellCheckInvoked = new Subject();
     this.spellingErrorOccurred = new Subject();
-    this.isMisspelledCache = new LRU({
-      max: 512, maxAge: 4 * 1000
-    });
+    this.isMisspelledCache = new LRU({ max: 5000 });
 
     this.scheduler = scheduler;
+    this.shouldAutoCorrect = true;
     this._automaticallyIdentifyLanguages = true;
 
     this.disp = new SerialSubscription();
@@ -143,9 +141,7 @@ module.exports = class SpellCheckHandler {
       this.currentSpellcheckerLanguage = 'en-US';
 
       if (webFrame) {
-        webFrame.setSpellCheckProvider(
-          this.currentSpellcheckerLanguage,
-          { spellCheck: this.handleElectronSpellCheck.bind(this) });
+        this.setSpellCheckProvider(webFrame);
       }
       return;
     }
@@ -206,6 +202,11 @@ module.exports = class SpellCheckHandler {
    *                            things that this method registered.
    */
   attachToInput(inputText=null) {
+    // OS X has no need for any of this
+    if (isMac && !inputText) {
+      return Subscription.EMPTY;
+    }
+
     let possiblySwitchedCharacterSets = new Subject();
     let wordsTyped = 0;
 
@@ -215,11 +216,8 @@ module.exports = class SpellCheckHandler {
 
     let input = inputText || (fromEventCapture(document.body, 'input')
       .mergeMap((e) => {
-        if (!e.target) return Observable.empty();
-        const value = e.target.isContentEditable ? e.target.textContent : e.target.value;
-        if (!value) return Observable.empty();
-
-        if (value.match(/\S\s$/)) {
+        if (!e.target || !e.target.value) return Observable.empty();
+        if (e.target.value.match(/\S\s$/)) {
           wordsTyped++;
         }
 
@@ -228,7 +226,7 @@ module.exports = class SpellCheckHandler {
           possiblySwitchedCharacterSets.next(true);
         }
 
-        return Observable.of(value);
+        return Observable.of(e.target.value);
       }));
 
     let disp = new Subscription();
@@ -278,7 +276,7 @@ module.exports = class SpellCheckHandler {
       .mergeMap(async (langWithoutLocale) => {
         d(`Auto-detected language as ${langWithoutLocale}`);
         let lang = await this.getLikelyLocaleForLanguage(langWithoutLocale);
-        if (lang !== this.currentSpellcheckerLanguage) await this.switchLanguage(lang);
+        if ( (lang !== this.currentSpellcheckerLanguage) || (!this.currentSpellchecker) ) await this.switchLanguage(lang);
 
         return lang;
       })
@@ -300,9 +298,7 @@ module.exports = class SpellCheckHandler {
           if (prevSpellCheckLanguage === this.currentSpellcheckerLanguage) return;
 
           d('Actually installing spell check provider to Electron');
-          webFrame.setSpellCheckProvider(
-            this.currentSpellcheckerLanguage,
-            { spellCheck: this.handleElectronSpellCheck.bind(this) });
+          this.setSpellCheckProvider(webFrame);
 
           prevSpellCheckLanguage = this.currentSpellcheckerLanguage;
         }));
@@ -385,6 +381,8 @@ module.exports = class SpellCheckHandler {
     let actualLang;
     let dict = null;
 
+    this.isMisspelledCache.reset();
+    
     // Set language on macOS
     if (isMac && this.currentSpellchecker) {
       d(`Setting current spellchecker to ${langCode}`);
@@ -393,8 +391,6 @@ module.exports = class SpellCheckHandler {
     }
 
     // Set language on Linux & Windows (Hunspell)
-    this.isMisspelledCache.reset();
-
     try {
       const {dictionary, language} = await this.loadDictionaryForLanguageWithAlternatives(langCode);
       actualLang = language; dict = dictionary;
@@ -461,21 +457,63 @@ module.exports = class SpellCheckHandler {
   }
 
   /**
-   *  The actual callout called by Electron to handle spellchecking
+   *  Sets the SpellCheckProvider on the given WebFrame. Handles API differences
+   *  in Electron.
+   *  @private
+   *  @param {*} webFrame
+   */
+  setSpellCheckProvider(webFrame) {
+    if (process.versions.electron >= '5.0.0') {
+      webFrame.setSpellCheckProvider(
+        this.currentSpellcheckerLanguage,
+        { spellCheck: this.handleElectronSpellCheck.bind(this) });
+    } else {
+      webFrame.setSpellCheckProvider(
+        this.currentSpellcheckerLanguage,
+        this.shouldAutoCorrect,
+        { spellCheck: this.handleElectron4SpellCheck.bind(this) });
+    }
+  }
+
+  /**
+   *  The actual callout called by Electron version 4 and below to handle
+   *  spellchecking
+   *  @private
+   */
+  handleElectron4SpellCheck(text) {
+    if (!this.currentSpellchecker) return true;
+
+    if (isMac) {
+      return !this.isMisspelled(text);
+    }
+
+    this.spellCheckInvoked.next(true);
+
+    let result = this.isMisspelled(text);
+    if (result) this.spellingErrorOccurred.next(text);
+    return !result;
+  }
+
+  /**
+   *  The actual callout called by Electron version 5 and above to handle 
+   *  spellchecking.
    *  @private
    */
   handleElectronSpellCheck(words, callback) {
-    if (!this.currentSpellchecker) callback([]);
-
-    if (!isMac) {
-      this.spellCheckInvoked.next(true);
+    if (!this.currentSpellchecker) {
+      callback([]);
+      return;
     }
 
-    const misspelled = words.filter(x => this.isMisspelled(x));
+    let misspelled = words.filter(w => this.isMisspelled(w));
 
-    if (!isMac) {
-      misspelled.forEach(x => this.spellingErrorOccurred.next(x));
+    if (isMac) {
+      callback(misspelled);
+      return;
     }
+
+    this.spellCheckInvoked.next(true);
+    misspelled.forEach(w => this.spellingErrorOccurred.next(w));
     callback(misspelled);
   }
 
@@ -572,6 +610,7 @@ module.exports = class SpellCheckHandler {
     if (!isMac) return;
     if (!this.currentSpellchecker) return;
 
+    this.isMisspelledCache.reset();
     this.currentSpellchecker.add(text);
   }
 
@@ -650,4 +689,4 @@ module.exports = class SpellCheckHandler {
     d(`Result: ${JSON.stringify(ret)}`);
     return ret;
   }
-}
+};
