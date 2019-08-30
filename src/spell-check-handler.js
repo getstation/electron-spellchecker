@@ -1,12 +1,13 @@
-const {spawn} = require('spawn-rx');
-const {requireTaskPool} = require('electron-remote');
+const { spawn } = require('spawn-rx');
+const { requireTaskPool } = require('@aabuhijleh/electron-remote');
 const LRU = require('lru-cache');
 
-const {Subscription} = require('rxjs/Subscription');
-const {Observable} = require('rxjs/Observable');
-const {Subject} = require('rxjs/Subject');
+const { Subscription } = require('rxjs/Subscription');
+const { Observable } = require('rxjs/Observable');
+const { Subject } = require('rxjs/Subject');
 const SerialSubscription = require('rxjs-serial-subscription').default;
 
+require('rxjs/add/observable/merge');
 require('rxjs/add/observable/defer');
 require('rxjs/add/observable/empty');
 require('rxjs/add/observable/fromEvent');
@@ -32,7 +33,7 @@ require('rxjs/add/operator/toPromise');
 require('./custom-operators');
 
 const DictionarySync = require('./dictionary-sync');
-const {normalizeLanguageCode} = require('./utility');
+const { normalizeLanguageCode } = require('./utility');
 
 let Spellchecker;
 
@@ -77,7 +78,7 @@ const alternatesTable = {};
  */
 function fromEventCapture(element, name) {
   return Observable.create((subj) => {
-    const handler = function(...args) {
+    const handler = function (...args) {
       if (args.length > 1) {
         subj.next(args);
       } else {
@@ -117,7 +118,7 @@ module.exports = class SpellCheckHandler {
    * @param  {Scheduler} scheduler            The Rx scheduler to use, for
    *                                          testing.
    */
-  constructor(dictionarySync=null, localStorage=null, scheduler=null) {
+  constructor(dictionarySync = null, localStorage = null, scheduler = null) {
     // NB: Require here so that consumers can handle native module exceptions.
     Spellchecker = require('./node-spellchecker').Spellchecker;
 
@@ -205,7 +206,12 @@ module.exports = class SpellCheckHandler {
    * @return {Disposable}       A Disposable which will unregister all of the
    *                            things that this method registered.
    */
-  attachToInput(inputText=null) {
+  attachToInput(inputText = null) {
+    // OS X has no need for any of this
+    if (isMac && !inputText) {
+      return Subscription.EMPTY;
+    }
+
     let possiblySwitchedCharacterSets = new Subject();
     let wordsTyped = 0;
 
@@ -254,9 +260,9 @@ module.exports = class SpellCheckHandler {
     }
 
     let contentToCheck = Observable.merge(
-        this.spellingErrorOccurred,
-        initialInputText,
-        possiblySwitchedCharacterSets)
+      this.spellingErrorOccurred,
+      initialInputText,
+      possiblySwitchedCharacterSets)
       .mergeMap(() => {
         if (lastInputText.length < 8) return Observable.empty();
         return Observable.of(lastInputText);
@@ -278,7 +284,7 @@ module.exports = class SpellCheckHandler {
       .mergeMap(async (langWithoutLocale) => {
         d(`Auto-detected language as ${langWithoutLocale}`);
         let lang = await this.getLikelyLocaleForLanguage(langWithoutLocale);
-        if (lang !== this.currentSpellcheckerLanguage) await this.switchLanguage(lang);
+        if ((lang !== this.currentSpellcheckerLanguage) || (!this.currentSpellchecker)) await this.switchLanguage(lang);
 
         return lang;
       })
@@ -294,7 +300,7 @@ module.exports = class SpellCheckHandler {
       let prevSpellCheckLanguage;
 
       disp.add(this.currentSpellcheckerChanged
-          .startWith(true)
+        .startWith(true)
         .filter(() => this.currentSpellcheckerLanguage)
         .subscribe(() => {
           if (prevSpellCheckLanguage === this.currentSpellcheckerLanguage) return;
@@ -385,6 +391,8 @@ module.exports = class SpellCheckHandler {
     let actualLang;
     let dict = null;
 
+    this.isMisspelledCache.reset();
+
     // Set language on macOS
     if (isMac && this.currentSpellchecker) {
       d(`Setting current spellchecker to ${langCode}`);
@@ -396,7 +404,7 @@ module.exports = class SpellCheckHandler {
     this.isMisspelledCache.reset();
 
     try {
-      const {dictionary, language} = await this.loadDictionaryForLanguageWithAlternatives(langCode);
+      const { dictionary, language } = await this.loadDictionaryForLanguageWithAlternatives(langCode);
       actualLang = language; dict = dictionary;
     } catch (e) {
       d(`Failed to load dictionary ${langCode}: ${e.message}`);
@@ -426,7 +434,7 @@ module.exports = class SpellCheckHandler {
    * Loads a dictionary and attempts to use fallbacks if it fails.
    * @private
    */
-  async loadDictionaryForLanguageWithAlternatives(langCode, cacheOnly=false) {
+  async loadDictionaryForLanguageWithAlternatives(langCode, cacheOnly = false) {
     this.fallbackLocaleTable = this.fallbackLocaleTable || require('./fallback-locales');
     let lang = langCode.split(/[-_]/)[0];
 
@@ -447,21 +455,60 @@ module.exports = class SpellCheckHandler {
     return await Observable.of(...alternatives)
       .concatMap((l) => {
         return Observable.defer(() =>
-            Observable.fromPromise(this.dictionarySync.loadDictionaryForLanguage(l, cacheOnly)))
-          .map((d) => ({language: l, dictionary: d}))
-          .do(({language}) => {
+          Observable.fromPromise(this.dictionarySync.loadDictionaryForLanguage(l, cacheOnly)))
+          .map((d) => ({ language: l, dictionary: d }))
+          .do(({ language }) => {
             alternatesTable[langCode] = language;
           })
           .catch(() => Observable.of(null));
       })
-      .concat(Observable.of({language: langCode, dictionary: null}))
+      .concat(Observable.of({ language: langCode, dictionary: null }))
       .filter((x) => x !== null)
       .take(1)
       .toPromise();
   }
 
   /**
-   *  The actual callout called by Electron to handle spellchecking
+   *  Sets the SpellCheckProvider on the given WebFrame. Handles API differences
+   *  in Electron.
+   *  @private
+   *  @param {*} webFrame
+   */
+  setSpellCheckProvider(webFrame) {
+    if (process.versions.electron >= '5.0.0') {
+      webFrame.setSpellCheckProvider(
+        this.currentSpellcheckerLanguage,
+        { spellCheck: this.handleElectronSpellCheck.bind(this) });
+    } else {
+      webFrame.setSpellCheckProvider(
+        this.currentSpellcheckerLanguage,
+        this.shouldAutoCorrect,
+        { spellCheck: this.handleElectron4SpellCheck.bind(this) });
+    }
+  }
+
+  /**
+   *  The actual callout called by Electron version 4 and below to handle
+   *  spellchecking
+   *  @private
+   */
+  handleElectron4SpellCheck(text) {
+    if (!this.currentSpellchecker) return true;
+
+    if (isMac) {
+      return !this.isMisspelled(text);
+    }
+
+    this.spellCheckInvoked.next(true);
+
+    let result = this.isMisspelled(text);
+    if (result) this.spellingErrorOccurred.next(text);
+    return !result;
+  }
+
+  /**
+   *  The actual callout called by Electron version 5 and above to handle
+   *  spellchecking.
    *  @private
    */
   handleElectronSpellCheck(words, callback) {
@@ -529,7 +576,7 @@ module.exports = class SpellCheckHandler {
    * @private
    */
   detectLanguageForText(text) {
-    return new Promise((res,rej) => {
+    return new Promise((res, rej) => {
       setTimeout(() => cld.detect(text).then(res, rej), 10);
     });
   }
@@ -585,7 +632,7 @@ module.exports = class SpellCheckHandler {
 
     if (process.platform === 'linux') {
       let locales = await spawn('locale', ['-a'])
-        .reduce((acc,x) => { acc.push(...x.split('\n')); return acc; }, [])
+        .reduce((acc, x) => { acc.push(...x.split('\n')); return acc; }, [])
         .toPromise()
         .catch(() => []);
 
@@ -620,7 +667,7 @@ module.exports = class SpellCheckHandler {
 
     // Some distros like Ubuntu make locale -a useless by dumping
     // every possible locale for the language into the list :-/
-    let counts = localeList.reduce((acc,x) => {
+    let counts = localeList.reduce((acc, x) => {
       let k = x.split(/[-_\.]/)[0];
       acc[k] = acc[k] || [];
       acc[k].push(x);
