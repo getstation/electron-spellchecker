@@ -1,6 +1,6 @@
 {
   "name": "@getstation/electron-spellchecker",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Implement spellchecking, correctly",
   "scripts": {
     "doc": "esdoc -c ./esdoc.json",
